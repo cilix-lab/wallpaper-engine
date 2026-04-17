@@ -16,7 +16,7 @@ WorkingDirectory=/opt/wallpaper-engine
 ExecStart=/opt/wallpaper-engine/.venv/bin/python -m uvicorn app.main:create_app \
     --factory \
     --host 127.0.0.1 \
-    --port 8000 \
+    --port ${PORT:-8000} \
     --log-config /dev/null
 
 # Restart policy
