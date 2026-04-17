@@ -1,0 +1,219 @@
+#!/usr/bin/env python3
+"""
+wallpaperctl — CLI for the wallpaper-engine service.
+
+Usage:
+    wallpaperctl set --random [--source local|unsplash|hybrid]
+    wallpaperctl refresh
+    wallpaperctl stats
+    wallpaperctl health
+"""
+
+import argparse
+import json
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+from urllib.request import Request, urlopen
+from urllib.error import URLError
+
+
+BASE_URL = os.environ.get("WALLPAPER_ENGINE_URL", "http://localhost:8000")
+
+
+# ---------------------------------------------------------------------------
+# HTTP helpers (stdlib-only, no third-party deps required at runtime)
+# ---------------------------------------------------------------------------
+
+
+def _get_json(path: str) -> dict:
+    url = f"{BASE_URL}{path}"
+    req = Request(url, headers={"Accept": "application/json"})
+    with urlopen(req, timeout=15) as resp:
+        return json.loads(resp.read())
+
+
+def _post_json(path: str) -> dict:
+    url = f"{BASE_URL}{path}"
+    req = Request(url, data=b"", method="POST", headers={"Accept": "application/json"})
+    with urlopen(req, timeout=30) as resp:
+        return json.loads(resp.read())
+
+
+def _download_image(params: str = "") -> Path:
+    url = f"{BASE_URL}/image{params}"
+    req = Request(url, headers={"Accept": "image/*"})
+    suffix = ".jpg"
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+    with urlopen(req, timeout=60) as resp:
+        shutil.copyfileobj(resp, tmp)
+    tmp.close()
+    return Path(tmp.name)
+
+
+# ---------------------------------------------------------------------------
+# Desktop wallpaper setters
+# ---------------------------------------------------------------------------
+
+
+def _detect_desktop() -> str:
+    desktop = os.environ.get("XDG_CURRENT_DESKTOP", "").lower()
+    if "gnome" in desktop or "unity" in desktop:
+        return "gnome"
+    if "kde" in desktop or "plasma" in desktop:
+        return "kde"
+    return "unknown"
+
+
+def _set_wallpaper_gnome(path: Path) -> None:
+    uri = path.as_uri()
+    subprocess.run(
+        ["gsettings", "set", "org.gnome.desktop.background", "picture-uri", uri],
+        check=True,
+    )
+    subprocess.run(
+        ["gsettings", "set", "org.gnome.desktop.background", "picture-uri-dark", uri],
+        check=True,
+    )
+
+
+def _set_wallpaper_kde(path: Path) -> None:
+    script = f"""
+var allDesktops = desktops();
+for (var i = 0; i < allDesktops.length; i++) {{
+    var d = allDesktops[i];
+    d.wallpaperPlugin = "org.kde.image";
+    d.currentConfigGroup = ["Wallpaper", "org.kde.image", "General"];
+    d.writeConfig("Image", "file://{path}");
+}}
+"""
+    subprocess.run(
+        [
+            "qdbus",
+            "org.kde.plasmashell",
+            "/PlasmaShell",
+            "org.kde.PlasmaShell.evaluateScript",
+            script,
+        ],
+        check=True,
+    )
+
+
+def _set_wallpaper(path: Path, desktop: str) -> None:
+    if desktop == "gnome":
+        _set_wallpaper_gnome(path)
+    elif desktop == "kde":
+        _set_wallpaper_kde(path)
+    else:
+        print(f"Unsupported desktop environment. Image saved to: {path}", file=sys.stderr)
+
+
+# ---------------------------------------------------------------------------
+# Sub-commands
+# ---------------------------------------------------------------------------
+
+
+def cmd_set(args) -> int:
+    source = args.source or "hybrid"
+    params = f"?source={source}"
+    if args.refresh:
+        params += "&refresh=true"
+
+    try:
+        image_path = _download_image(params)
+    except URLError as exc:
+        print(f"Error contacting wallpaper-engine: {exc}", file=sys.stderr)
+        return 1
+
+    desktop = _detect_desktop()
+    try:
+        _set_wallpaper(image_path, desktop)
+        print(f"Wallpaper set ({desktop}): {image_path}")
+    except (subprocess.CalledProcessError, FileNotFoundError) as exc:
+        print(f"Failed to set wallpaper: {exc}", file=sys.stderr)
+        return 1
+    return 0
+
+
+def cmd_refresh(_args) -> int:
+    try:
+        data = _post_json("/refresh")
+        print(json.dumps(data, indent=2))
+    except URLError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+    return 0
+
+
+def cmd_stats(_args) -> int:
+    try:
+        data = _get_json("/stats")
+        print(json.dumps(data, indent=2))
+    except URLError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+    return 0
+
+
+def cmd_health(_args) -> int:
+    try:
+        data = _get_json("/health")
+        print(json.dumps(data, indent=2))
+    except URLError as exc:
+        print(f"Service unreachable: {exc}", file=sys.stderr)
+        return 1
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# Argument parsing
+# ---------------------------------------------------------------------------
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="wallpaperctl",
+        description="Control the wallpaper-engine service",
+    )
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    p_set = sub.add_parser("set", help="Download and set the desktop wallpaper")
+    p_set.add_argument(
+        "--random", action="store_true", default=True,
+        help="Select a random image (default behaviour)",
+    )
+    p_set.add_argument(
+        "--source",
+        choices=["local", "unsplash", "hybrid"],
+        default="hybrid",
+        help="Image source pool (default: hybrid)",
+    )
+    p_set.add_argument(
+        "--refresh", action="store_true", default=False,
+        help="Force a fresh download from Unsplash",
+    )
+
+    sub.add_parser("refresh", help="Fetch a new image from Unsplash and cache it")
+    sub.add_parser("stats", help="Show repository statistics")
+    sub.add_parser("health", help="Check service health")
+
+    return parser
+
+
+def main() -> None:
+    parser = build_parser()
+    args = parser.parse_args()
+    dispatch = {
+        "set": cmd_set,
+        "refresh": cmd_refresh,
+        "stats": cmd_stats,
+        "health": cmd_health,
+    }
+    sys.exit(dispatch[args.command](args))
+
+
+if __name__ == "__main__":
+    main()

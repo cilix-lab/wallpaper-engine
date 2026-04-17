@@ -1,0 +1,42 @@
+[Unit]
+Description=Wallpaper Engine — Unsplash + Local Repository Service
+Documentation=https://github.com/yourorg/wallpaper-engine
+After=network.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=wallpaper
+Group=wallpaper
+
+# Load environment from file — copy .env.example to /etc/wallpaper-engine.env
+EnvironmentFile=/etc/wallpaper-engine.env
+
+WorkingDirectory=/opt/wallpaper-engine
+ExecStart=/opt/wallpaper-engine/.venv/bin/python -m uvicorn app.main:create_app \
+    --factory \
+    --host 127.0.0.1 \
+    --port 8000 \
+    --log-config /dev/null
+
+# Restart policy
+Restart=always
+RestartSec=5s
+StartLimitIntervalSec=60s
+StartLimitBurst=5
+
+# Security hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/data /opt/wallpaper-engine
+ProtectHome=true
+CapabilityBoundingSet=
+
+# Logging — redirect to journald
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=wallpaper-engine
+
+[Install]
+WantedBy=multi-user.target
