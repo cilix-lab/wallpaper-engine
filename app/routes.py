@@ -53,7 +53,6 @@ async def get_image(
     return FileResponse(
         path=str(path),
         media_type=_media_type(path),
-        filename=path.name,
     )
 
 
