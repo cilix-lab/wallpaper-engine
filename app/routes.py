@@ -75,6 +75,40 @@ async def refresh_image(
 
 
 # ---------------------------------------------------------------------------
+# POST /scan
+# ---------------------------------------------------------------------------
+
+
+@router.post("/scan")
+async def scan(settings: Settings = Depends(get_settings)):
+    """Re-scan the images directory and index any new or removed files."""
+    added = await scan_and_index(settings)
+    return {"added": added}
+
+
+# ---------------------------------------------------------------------------
+# GET /
+# ---------------------------------------------------------------------------
+
+
+@router.get("/")
+async def root():
+    """Landing page listing available endpoints."""
+    return JSONResponse(
+        content={
+            "service": "wallpaper-engine",
+            "endpoints": {
+                "GET /image": "Serve a wallpaper image (?source=local|unsplash|hybrid&refresh=true)",
+                "POST /refresh": "Fetch a new image from Unsplash",
+                "POST /scan": "Re-scan the local images directory",
+                "GET /stats": "Repository statistics",
+                "GET /health": "Health check",
+            },
+        }
+    )
+
+
+# ---------------------------------------------------------------------------
 # GET /health
 # ---------------------------------------------------------------------------
 
