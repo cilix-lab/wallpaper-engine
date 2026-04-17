@@ -25,9 +25,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         logger.info("Starting wallpaper-engine service")
-        await db.init(settings.db_path)
-        added = await scan_and_index(settings)
-        logger.info("Repository indexed", extra={"new_images": added})
+        try:
+            await db.init(settings.db_path)
+            added = await scan_and_index(settings)
+            logger.info("Repository indexed", extra={"new_images": added})
+        except Exception:
+            logger.exception("Startup failed — aborting")
+            raise
         yield
         logger.info("Shutting down wallpaper-engine service")
         await db.close()

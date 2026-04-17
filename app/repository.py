@@ -39,7 +39,7 @@ async def scan_and_index(settings: Settings) -> int:
         for record in all_records:
             path = image_dir / record.filename
             if not path.exists():
-                logger.info("Removing stale DB entry", extra={"filename": record.filename})
+                logger.info("Removing stale DB entry", extra={"image": record.filename})
                 await session.delete(record)
 
         # ── Index new files ───────────────────────────────────────────────
@@ -56,7 +56,7 @@ async def scan_and_index(settings: Settings) -> int:
 
             sha256 = _hash_file(path)
             if sha256 in existing_hashes:
-                logger.debug("Skipping duplicate file", extra={"filename": path.name})
+                logger.debug("Skipping duplicate file", extra={"image": path.name})
                 continue
 
             image = Image(
@@ -70,7 +70,7 @@ async def scan_and_index(settings: Settings) -> int:
             session.add(image)
             existing_hashes.add(sha256)
             added += 1
-            logger.info("Indexed local image", extra={"filename": path.name})
+            logger.info("Indexed local image", extra={"image": path.name})
 
     logger.info("Repository scan complete", extra={"added": added})
     return added
