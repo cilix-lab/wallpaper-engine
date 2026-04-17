@@ -15,13 +15,15 @@ import os
 import shutil
 import subprocess
 import sys
-import tempfile
 from pathlib import Path
 from urllib.request import Request, urlopen
 from urllib.error import URLError
 
 
 BASE_URL = os.environ.get("WALLPAPER_ENGINE_URL", "http://localhost:8000")
+
+_data_home = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share"))
+WALLPAPER_PATH = _data_home / "wallpaper-engine" / "current.jpg"
 
 
 # ---------------------------------------------------------------------------
@@ -44,14 +46,14 @@ def _post_json(path: str) -> dict:
 
 
 def _download_image(params: str = "") -> Path:
+    WALLPAPER_PATH.parent.mkdir(parents=True, exist_ok=True)
     url = f"{BASE_URL}/image{params}"
     req = Request(url, headers={"Accept": "image/*"})
-    suffix = ".jpg"
-    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
-    with urlopen(req, timeout=60) as resp:
-        shutil.copyfileobj(resp, tmp)
-    tmp.close()
-    return Path(tmp.name)
+    tmp = WALLPAPER_PATH.with_suffix(".tmp")
+    with urlopen(req, timeout=60) as resp, tmp.open("wb") as fh:
+        shutil.copyfileobj(resp, fh)
+    tmp.replace(WALLPAPER_PATH)
+    return WALLPAPER_PATH
 
 
 # ---------------------------------------------------------------------------
@@ -70,14 +72,12 @@ def _detect_desktop() -> str:
 
 def _set_wallpaper_gnome(path: Path) -> None:
     uri = path.as_uri()
-    subprocess.run(
-        ["gsettings", "set", "org.gnome.desktop.background", "picture-uri", uri],
-        check=True,
-    )
-    subprocess.run(
-        ["gsettings", "set", "org.gnome.desktop.background", "picture-uri-dark", uri],
-        check=True,
-    )
+    schema = "org.gnome.desktop.background"
+    # Clear first so GNOME re-reads the file even when the URI is unchanged.
+    for key in ("picture-uri", "picture-uri-dark"):
+        subprocess.run(["gsettings", "set", schema, key, ""], check=True)
+    for key in ("picture-uri", "picture-uri-dark"):
+        subprocess.run(["gsettings", "set", schema, key, uri], check=True)
 
 
 def _set_wallpaper_kde(path: Path) -> None:
@@ -87,6 +87,7 @@ for (var i = 0; i < allDesktops.length; i++) {{
     var d = allDesktops[i];
     d.wallpaperPlugin = "org.kde.image";
     d.currentConfigGroup = ["Wallpaper", "org.kde.image", "General"];
+    d.writeConfig("Image", "");
     d.writeConfig("Image", "file://{path}");
 }}
 """
@@ -132,6 +133,7 @@ def cmd_set(args) -> int:
     try:
         _set_wallpaper(image_path, desktop)
         print(f"Wallpaper set ({desktop}): {image_path}")
+        print(f"Stored at: {WALLPAPER_PATH}")
     except (subprocess.CalledProcessError, FileNotFoundError) as exc:
         print(f"Failed to set wallpaper: {exc}", file=sys.stderr)
         return 1
