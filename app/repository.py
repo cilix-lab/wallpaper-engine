@@ -107,6 +107,14 @@ async def get_stats(settings: Settings) -> dict:
     }
 
 
+async def get_image_by_id(image_id: str) -> Image | None:
+    """Return the Image with the given primary-key id, or None."""
+    async with db.session() as session:
+        return (
+            await session.execute(select(Image).where(Image.id == image_id))
+        ).scalar_one_or_none()
+
+
 async def persist_image(image: Image) -> Image:
     """
     Save *image* to the database.  If an entry with the same SHA-256 already

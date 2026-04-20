@@ -8,7 +8,7 @@ from sqlalchemy import func, select
 from .config import Settings
 from .database import db
 from .models import Image
-from .repository import persist_image
+from .repository import get_image_by_id, persist_image
 from .unsplash import download_wallpaper
 
 logger = logging.getLogger(__name__)
@@ -22,6 +22,7 @@ async def select_image(
     settings: Settings,
     source: str | None = None,
     refresh: bool = False,
+    image_id: str | None = None,
 ) -> tuple[Image, Path]:
     """
     Return ``(Image, absolute_path)`` according to the requested strategy.
@@ -29,10 +30,17 @@ async def select_image(
     *source* values: ``"local"`` | ``"unsplash"`` | ``"hybrid"``
 
     If *refresh* is True, always fetch a fresh image from Unsplash.
+    If *image_id* is given, look up that specific image and ignore other params.
     """
+    if image_id is not None:
+        image = await get_image_by_id(image_id)
+        if image is None:
+            raise ImageNotFoundError(f"No image with id '{image_id}'")
+        return image, Path(settings.image_dir) / image.filename
+
     effective_source = (source or settings.default_source).lower()
 
-    if refresh or effective_source == "unsplash" and refresh:
+    if refresh:
         return await _unsplash_fresh(settings)
 
     if effective_source == "local":

@@ -5,7 +5,7 @@ import logging
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 
 from .config import Settings, get_settings
 from .repository import get_stats, persist_image, scan_and_index
@@ -26,6 +26,7 @@ async def get_image(
     request: Request,
     source: str = Query(default=None, description="local | unsplash | hybrid"),
     refresh: bool = Query(default=False, description="Force a fresh Unsplash fetch"),
+    id: str = Query(default=None, description="Return a specific image by its id"),
     settings: Settings = Depends(get_settings),
 ):
     """
@@ -34,10 +35,11 @@ async def get_image(
     * Send ``Accept: application/json`` to receive metadata instead of the file.
     * Use ``?source=local|unsplash|hybrid`` to control the selection pool.
     * Use ``?refresh=true`` to force a fresh Unsplash download.
+    * Use ``?id=<id>`` to fetch a specific image by its id.
     """
     _validate_source(source)
     try:
-        image, path = await select_image(settings, source=source, refresh=refresh)
+        image, path = await select_image(settings, source=source, refresh=refresh, image_id=id)
     except ImageNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     except ValueError as exc:
@@ -50,9 +52,18 @@ async def get_image(
     if "application/json" in accept:
         return _image_to_json(image)
 
+    meta_headers = {
+        "X-Image-Id": image.id,
+        "X-Image-Author": image.author or "",
+        "X-Image-Source": image.source,
+    }
+    if image.unsplash_url:
+        meta_headers["X-Unsplash-Url"] = image.unsplash_url
+
     return FileResponse(
         path=str(path),
         media_type=_media_type(path),
+        headers=meta_headers,
     )
 
 

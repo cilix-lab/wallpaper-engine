@@ -45,15 +45,22 @@ def _post_json(path: str) -> dict:
         return json.loads(resp.read())
 
 
-def _download_image(params: str = "") -> Path:
+def _download_image(params: str = "") -> tuple[Path, dict]:
+    """Download the image and return (path, metadata_headers)."""
     WALLPAPER_PATH.parent.mkdir(parents=True, exist_ok=True)
     url = f"{BASE_URL}/image{params}"
     req = Request(url, headers={"Accept": "image/*"})
     tmp = WALLPAPER_PATH.with_suffix(".tmp")
     with urlopen(req, timeout=60) as resp, tmp.open("wb") as fh:
         shutil.copyfileobj(resp, fh)
+        headers = {
+            "id": resp.headers.get("X-Image-Id", ""),
+            "author": resp.headers.get("X-Image-Author", ""),
+            "source": resp.headers.get("X-Image-Source", ""),
+            "unsplash_url": resp.headers.get("X-Unsplash-Url", ""),
+        }
     tmp.replace(WALLPAPER_PATH)
-    return WALLPAPER_PATH
+    return WALLPAPER_PATH, headers
 
 
 # ---------------------------------------------------------------------------
@@ -118,13 +125,16 @@ def _set_wallpaper(path: Path, desktop: str) -> None:
 
 
 def cmd_set(args) -> int:
-    source = args.source or "hybrid"
-    params = f"?source={source}"
-    if args.refresh:
-        params += "&refresh=true"
+    if args.id:
+        params = f"?id={args.id}"
+    else:
+        source = args.source or "hybrid"
+        params = f"?source={source}"
+        if args.refresh:
+            params += "&refresh=true"
 
     try:
-        image_path = _download_image(params)
+        image_path, meta = _download_image(params)
     except URLError as exc:
         print(f"Error contacting wallpaper-engine: {exc}", file=sys.stderr)
         return 1
@@ -133,11 +143,23 @@ def cmd_set(args) -> int:
     try:
         _set_wallpaper(image_path, desktop)
         print(f"Wallpaper set ({desktop}): {image_path}")
-        print(f"Stored at: {WALLPAPER_PATH}")
+        _print_credit(meta)
     except (subprocess.CalledProcessError, FileNotFoundError) as exc:
         print(f"Failed to set wallpaper: {exc}", file=sys.stderr)
         return 1
     return 0
+
+
+def _print_credit(meta: dict) -> None:
+    parts = []
+    if meta.get("author"):
+        parts.append(f"Photo by {meta['author']}")
+    if meta.get("id"):
+        parts.append(f"ID: {meta['id']}")
+    if meta.get("unsplash_url"):
+        parts.append(meta["unsplash_url"])
+    if parts:
+        print(" · ".join(parts))
 
 
 def cmd_refresh(_args) -> int:
@@ -186,6 +208,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_set.add_argument(
         "--random", action="store_true", default=True,
         help="Select a random image (default behaviour)",
+    )
+    p_set.add_argument(
+        "--id",
+        default=None,
+        metavar="IMAGE_ID",
+        help="Set a specific image by its id (overrides --source and --refresh)",
     )
     p_set.add_argument(
         "--source",
